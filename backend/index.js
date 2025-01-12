@@ -1,41 +1,112 @@
 const express = require('express');
-const { generateJavaFile } = require('./generateJavaFile');
-const { generateCppFile } = require('./generateCppFile');
-const {executeJava} = require('./executeJava');
-const { executeCpp } = require('./executeCpp');
+const {DBConnection} = require('./database/db.js');
+const User = require('./models/User.js');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const cookieParser = require('cookie-parser');
+const cors = require('cors');
+
 const app = express();
-const cors  = require('cors');
+require('dotenv').config();
 
-app.use(cors());
 app.use(express.json());
-app.use(express.urlencoded({ extended: true}));
+app.use(express.urlencoded({ extended: true }));
+app.use(cors());
+app.use(cookieParser());
 
-app.get("/",(req,res) => {
-    res.send("Welcome to online judge");
+DBConnection();
+
+app.get("/", (req, res) => {
+    res.send("welcome to the demo");
 });
 
-app.post("/run",async (req,res) => {
-    const {language = "java", code}=req.body;
-    if(code === undefined){
-        return res.status(400).json({error: "No code is provided."});
-    }
+app.get("/home", (req, res) => {
+    res.send("welcome to the home page");
+});
+
+app.post("/register",async (req, res) => {
+    
     try {
-        var filePath = null;
-        var output = null;
-        if(language === 'cpp'){
-            filePath = await generateCppFile(language, code);
-            output = await executeCpp(filePath);
+        const {firstName, lastName, email, password} = req.body;
+
+        if(!(firstName && lastName && email && password)){
+            return res.status(400).send("please enter all required fields");
         }
-        if(language === 'java'){
-            filePath = await generateJavaFile(language, code);
-            output = await executeJava(filePath);
+
+        const existingUser = await User.findOne({email});
+        if(existingUser){
+            return res.status(400).send("user already exists");
         }
-        res.json({output});
+
+        const hashPassword =await bcrypt.hash(password, 10);
+        console.log(hashPassword);
+
+        const user = await User.create({
+            firstName,
+            lastName,
+            email,
+            password: hashPassword,
+        });
+
+        const token = jwt.sign({ id: user._id, email }, process.env.SECRET_KEY, {
+            expiresIn: "1d",
+        });
+        user.token = token;
+        user.password = undefined;
+        res.status(200).json({ message: "You have successfully registered!", user });
+
     } catch (error) {
-        res.status(500).json({error: error.message});
+        console.log(error);
     }
 });
 
-app.listen(7000,() =>{
-    console.log("server is running on port:7000");
+app.use('/problem', require('./controller/problemRoutes.js'));
+
+app.post("/login", async (req, res) => {
+    try {
+        //get the user data
+        const { email, password } = req.body;
+
+        // check all the data should exists
+        if (!(email && password)) {
+            return res.status(400).send("Please enter all the information");
+        }
+
+        //find the user in the database
+        const user = await User.findOne({ email });
+        if (!user) {
+            return res.status(401).send("User not found!");
+        }
+
+        //match the password
+        const enteredPassword = await bcrypt.compare(password, user.password);
+        if (!enteredPassword) {
+            return res.status(401).send("Password is incorrect");
+        }
+
+        const token = jwt.sign({ id: user._id }, process.env.SECRET_KEY, {
+            expiresIn: "1d",
+        });
+        user.token = token;
+        user.password = undefined;
+
+        //store cookies
+        const options = {
+            expires: new Date(Date.now() + 1 * 24 * 60 * 60 * 1000),
+            httpOnly: true, //only manipulate by server not by client/user
+        };
+
+        //send the token
+        res.status(200).cookie("token", token, options).json({
+            message: "You have successfully logged in!",
+            success: true,
+            token,
+        });
+    } catch (error) {
+        console.log(error.message);
+    }
+});
+
+app.listen(8000,()=>{
+    console.log("server is running on 8000 port");
 });

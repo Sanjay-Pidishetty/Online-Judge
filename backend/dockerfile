@@ -1,0 +1,7 @@
+FROM node:23-alpine
+WORKDIR /app/backend
+RUN apk update && apk add --no-cache openjdk11 bash curl
+COPY . /app/backend 
+RUN npm install
+EXPOSE 8000
+CMD ["node","index.js"]
